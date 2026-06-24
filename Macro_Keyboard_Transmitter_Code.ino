@@ -45,6 +45,7 @@ char apSsid[SSID_LEN] = "MacroPad_Setup";
 char apPass[PASS_LEN] = "macro1234";
 char layout[5] = "US";
 char targetMacStr[MAC_STR_LEN] = "FF:FF:FF:FF:FF:FF";
+char receiverIp[16] = "";
 uint32_t sleepTimeout = 300;
 uint32_t repeatDelay = 0;
 bool disableSleepWired = false;
@@ -73,7 +74,7 @@ int logHead = 0;
 int logCount = 0;
 
 char configBuf[22000];
-char statusBuf[640];
+char statusBuf[700];
 
 void logLine(const char *msg) {
   snprintf(logBuf[logHead], LOG_WIDTH, "[%lus] %s", millis() / 1000, msg);
@@ -193,11 +194,32 @@ void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   logLine(status == ESP_NOW_SEND_SUCCESS ? "ESP-NOW delivery OK" : "ESP-NOW delivery FAIL");
 }
 
+void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (len >= 4 && memcmp(data, "<IP>", 4) == 0) {
+    int n = len - 4;
+    if (n > (int)sizeof(receiverIp) - 1) n = sizeof(receiverIp) - 1;
+    memcpy(receiverIp, data + 4, n);
+    receiverIp[n] = '\0';
+    char m[48];
+    snprintf(m, sizeof(m), "Receiver IP learned: %s", receiverIp);
+    logLine(m);
+  }
+}
+
 void broadcastMacro(const char *macro) {
   memset(&outgoing, 0, sizeof(outgoing));
   strncpy(outgoing.layout, layout, sizeof(outgoing.layout) - 1);
   strncpy(outgoing.macro, macro, sizeof(outgoing.macro) - 1);
   if (esp_now_send(targetMac, (uint8_t *)&outgoing, sizeof(outgoing)) != ESP_OK) logLine("ESP-NOW send error");
+}
+
+void broadcastWifiCreds() {
+  char buf[120];
+  int n = snprintf(buf, sizeof(buf), "<WIFI>%s|%s", homeSsid, homePass);
+  if (n < 0) return;
+  if (n > (int)sizeof(buf)) n = sizeof(buf);
+  esp_now_send(targetMac, (uint8_t *)buf, n);
+  logLine("Broadcast Wi-Fi credentials to receiver");
 }
 
 char translateChar(char c) {
@@ -398,13 +420,14 @@ void buildConfigJson() {
 
 void buildStatusJson() {
   snprintf(statusBuf, sizeof(statusBuf),
-    "{\"wired\":%s,\"apActive\":%s,\"staConnected\":%s,\"staIp\":\"%s\",\"apIp\":\"%s\",\"selfMac\":\"%s\",\"activeLayer\":%u,\"totalLayers\":%u}",
+    "{\"wired\":%s,\"apActive\":%s,\"staConnected\":%s,\"staIp\":\"%s\",\"apIp\":\"%s\",\"selfMac\":\"%s\",\"receiverIp\":\"%s\",\"activeLayer\":%u,\"totalLayers\":%u}",
     ((bool)USB) ? "true" : "false",
     apActive ? "true" : "false",
     staConnected ? "true" : "false",
     WiFi.localIP().toString().c_str(),
     WiFi.softAPIP().toString().c_str(),
     WiFi.macAddress().c_str(),
+    receiverIp[0] ? receiverIp : "",
     activeLayer, totalLayers);
 }
 
@@ -505,12 +528,16 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <input type="text" id="ssid">
 <label>Home Wi-Fi Password</label>
 <input type="password" id="pass" placeholder="(unchanged if blank)">
+<p class="small">Saving Wi-Fi credentials also auto-syncs them to the paired Receiver over ESP-NOW.</p>
 
 <div class="card">
 <h3>Firmware Update (OTA)</h3>
-<p class="small">Upload a compiled .bin to flash new firmware over Wi-Fi. The device reboots automatically on success. Do not power off during upload.</p>
+<p class="small">Select a .bin, then flash this MacroPad or the paired Receiver over Wi-Fi. The Receiver is flashed cross-origin via its learned IP.</p>
 <input type="file" id="fwfile" accept=".bin">
-<button class="act" id="otaBtn" style="width:100%;margin-top:10px;">Upload &amp; Flash</button>
+<div class="inline" style="margin-top:10px;">
+<button class="act" id="otaSelfBtn" style="flex:1;">Flash MacroPad</button>
+<button class="act" id="otaRxBtn" style="flex:1;">Flash Receiver</button>
+</div>
 <div class="small" id="otaStat"></div>
 </div>
 
@@ -530,9 +557,10 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 </div>
 
 <div class="panel" id="pair">
-<label>Target ESP-NOW MAC Address</label>
+<label>Receiver (Dongle) MAC Address</label>
 <input type="text" id="mac" placeholder="AA:BB:CC:DD:EE:FF">
-<p class="small">Broadcasts the macro struct to this receiver on every key press. FF:FF:FF:FF:FF:FF targets all.</p>
+<p class="small">Enter the Receiver's MAC shown on its own web page. Macros and Wi-Fi sync are sent to this address over ESP-NOW. The Receiver auto-reports its IP back here.</p>
+<div class="status" id="rxStatus" style="margin-top:12px;">Receiver IP: unknown</div>
 </div>
 
 <button class="save" id="saveBtn">Save All Settings</button>
@@ -545,6 +573,7 @@ let MAXL=10;
 let layers=[];
 let totalLayers=3;
 let editLayer=0;
+let rxIp='';
 const grid=document.getElementById('keyGrid');
 const inputs=[];
 for(let i=0;i<16;i++){
@@ -601,7 +630,9 @@ function loadConfig(){
 }
 function refreshStatus(){
   fetch('/api/status').then(r=>r.json()).then(s=>{
-    document.getElementById('netStatus').textContent='Active Layer: '+(s.activeLayer+1)+'/'+s.totalLayers+' | USB: '+(s.wired?'Wired':'Unpowered')+' | Mode: '+(s.apActive?'AP+STA':'STA-only')+' | STA: '+(s.staConnected?('Connected '+s.staIp):'Disconnected')+' | AP: '+s.apIp+' | MAC: '+s.selfMac;
+    rxIp=s.receiverIp||'';
+    document.getElementById('netStatus').textContent='Active Layer: '+(s.activeLayer+1)+'/'+s.totalLayers+' | USB: '+(s.wired?'Wired':'Unpowered')+' | Mode: '+(s.apActive?'AP+STA':'STA-only')+' | STA: '+(s.staConnected?('Connected '+s.staIp):'Disconnected')+' | RX IP: '+(rxIp||'unknown')+' | MAC: '+s.selfMac;
+    document.getElementById('rxStatus').textContent='Receiver IP: '+(rxIp||'unknown (waiting for handshake)');
   });
 }
 function loadLogs(){fetch('/api/logs').then(r=>r.text()).then(t=>{const v=document.getElementById('logView');v.textContent=t;v.scrollTop=v.scrollHeight;});}
@@ -633,19 +664,22 @@ document.getElementById('resetBtn').onclick=()=>{
   if(!confirm('Factory Reset will erase ALL settings and reboot. Continue?'))return;
   fetch('/api/reset',{method:'POST'}).then(r=>r.json()).then(j=>{toast(j.status||'Resetting');}).catch(()=>toast('Rebooting'));
 };
-document.getElementById('otaBtn').onclick=()=>{
+function doOTA(url,label){
   const f=document.getElementById('fwfile').files[0];
   const stat=document.getElementById('otaStat');
   if(!f){toast('Select a .bin file');return;}
+  if(url.indexOf('http')===0&&!rxIp){toast('Receiver IP unknown');return;}
   const fd=new FormData();fd.append('update',f,f.name);
   const xhr=new XMLHttpRequest();
-  xhr.open('POST','/api/update');
-  xhr.upload.onprogress=e=>{if(e.lengthComputable){stat.textContent='Uploading... '+Math.round(e.loaded/e.total*100)+'%';}};
-  xhr.onload=()=>{try{const j=JSON.parse(xhr.responseText);stat.textContent=j.status;toast(j.status);}catch(e){stat.textContent='Flashed, rebooting...';toast('Rebooting');}};
-  xhr.onerror=()=>{stat.textContent='Upload connection lost (device may be rebooting)';};
-  stat.textContent='Starting upload...';
+  xhr.open('POST',url);
+  xhr.upload.onprogress=e=>{if(e.lengthComputable)stat.textContent=label+': '+Math.round(e.loaded/e.total*100)+'%';};
+  xhr.onload=()=>{try{const j=JSON.parse(xhr.responseText);stat.textContent=label+': '+j.status;toast(j.status);}catch(e){stat.textContent=label+': done, rebooting';toast('Rebooting');}};
+  xhr.onerror=()=>{stat.textContent=label+': connection lost (device may be rebooting)';};
+  stat.textContent=label+': starting...';
   xhr.send(fd);
-};
+}
+document.getElementById('otaSelfBtn').onclick=()=>doOTA('/api/update','MacroPad');
+document.getElementById('otaRxBtn').onclick=()=>doOTA('http://'+rxIp+'/api/update','Receiver');
 loadConfig();refreshStatus();loadLogs();
 setInterval(()=>{refreshStatus();loadLogs();},2000);
 </script>
@@ -767,6 +801,7 @@ void handleSave(AsyncWebServerRequest *request) {
 
   if (ssidChanged) {
     if (!apActive) enableApMode();
+    broadcastWifiCreds();
     staConnected = false;
     lastStaCheck = 0;
     if (homeSsid[0] != '\0') WiFi.begin(homeSsid, homePass);
@@ -831,6 +866,7 @@ void initEspNow() {
     return;
   }
   esp_now_register_send_cb(onDataSent);
+  esp_now_register_recv_cb(onDataRecv);
   registerPeer();
   char m[48];
   snprintf(m, sizeof(m), "ESP-NOW ready on channel %u", ch);
