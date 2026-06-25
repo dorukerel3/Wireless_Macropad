@@ -316,11 +316,26 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MacroPad Receiver</title>
 <style>
-:root{--bg:#15171c;--card:#1e2128;--fg:#e7e9ee;--muted:#9aa0aa;--accent:#5b8cff;--border:#30343d;--tabbg:#262a32;}
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1c1e21;--muted:#65676b;--accent:#3b6cf6;--border:#d8dadf;--tabbg:#e9eaee;--danger:#e23b3b;}
+[data-theme="dark"]{--bg:#15171c;--card:#1e2128;--fg:#e7e9ee;--muted:#9aa0aa;--accent:#5b8cff;--border:#30343d;--tabbg:#262a32;--danger:#ff5d5d;}
 *{box-sizing:border-box;}
-body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);transition:.2s;}
+header{display:flex;align-items:center;justify-content:flex-end;padding:16px 24px 16px 104px;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5;}
+h1{font-size:20px;margin:0;}
+.theme-switch{position:fixed;top:16px;left:20px;z-index:50;background:none;border:none;padding:0;margin:0;cursor:pointer;display:inline-flex;align-items:center;-webkit-tap-highlight-color:transparent;}
+.switch-track{position:relative;width:64px;height:32px;border-radius:999px;background:var(--tabbg);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 8px;box-shadow:inset 0 1px 3px rgba(0,0,0,.18);transition:all 0.3s ease-in-out;}
+.switch-icon{position:relative;z-index:2;width:15px;height:15px;display:flex;align-items:center;justify-content:center;transition:all 0.3s ease-in-out;}
+.switch-icon svg{width:15px;height:15px;display:block;}
+.switch-icon.sun{color:#f5a623;opacity:1;transform:scale(1);}
+.switch-icon.moon{color:#8ab4ff;opacity:.45;transform:scale(.85);}
+[data-theme="dark"] .switch-icon.sun{opacity:.45;transform:scale(.85);}
+[data-theme="dark"] .switch-icon.moon{opacity:1;transform:scale(1);}
+.switch-thumb{position:absolute;top:50%;left:3px;width:26px;height:26px;border-radius:50%;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.28);transform:translateY(-50%) translateX(0);transition:all 0.3s ease-in-out;z-index:1;}
+[data-theme="dark"] .switch-thumb{transform:translateY(-50%) translateX(32px);}
+.theme-switch:hover .switch-track{border-color:var(--accent);box-shadow:inset 0 1px 3px rgba(0,0,0,.18),0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);}
+.theme-switch:active .switch-thumb{width:30px;}
+.theme-switch:focus-visible .switch-track{outline:2px solid var(--accent);outline-offset:2px;}
 .wrap{max-width:560px;margin:0 auto;padding:22px;}
-h1{font-size:20px;}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;}
 h3{margin:0 0 8px;font-size:15px;}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;}
@@ -335,8 +350,17 @@ button.ghost{background:var(--tabbg);border:1px solid var(--border);color:var(--
 </style>
 </head>
 <body>
+<header>
+<h1>MacroPad Receiver</h1>
+</header>
+<button class="theme-switch" id="themeBtn" type="button" role="switch" aria-label="Toggle light and dark theme">
+<span class="switch-track">
+<span class="switch-icon sun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg></span>
+<span class="switch-icon moon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></span>
+<span class="switch-thumb"></span>
+</span>
+</button>
 <div class="wrap">
-<h1>MacroPad Receiver (Dongle)</h1>
 
 <div class="card">
 <h3>This Device MAC</h3>
@@ -374,6 +398,10 @@ button.ghost{background:var(--tabbg);border:1px solid var(--border);color:var(--
 
 <script>
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
+const themeBtn=document.getElementById('themeBtn');
+function applyTheme(m){document.documentElement.setAttribute('data-theme',m);themeBtn.setAttribute('aria-checked',m==='dark'?'true':'false');localStorage.setItem('mp_theme',m);}
+applyTheme(localStorage.getItem('mp_theme')||'light');
+themeBtn.onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
 function st(){
   fetch('/api/status').then(r=>r.json()).then(s=>{
     document.getElementById('mac').textContent=s.selfMac;
