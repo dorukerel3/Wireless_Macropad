@@ -14,30 +14,24 @@
 #include <esp_wifi.h>
 #include <string.h>
 #include <ctype.h>
-
 USBHIDKeyboard Keyboard;
 USBHIDMouse Mouse;
 USBHIDConsumerControl Consumer;
-
 AsyncWebServer server(80);
 DNSServer dnsServer;
 Preferences prefs;
-
 static const uint8_t BUTTON_PINS[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 static const uint16_t DEBOUNCE_MS = 30;
 static const uint8_t DNS_PORT = 53;
-
 static const uint8_t MACRO_LEN = 100;
 static const uint8_t SSID_LEN = 33;
 static const uint8_t PASS_LEN = 65;
 static const uint8_t MAC_STR_LEN = 18;
 static const uint8_t MAX_LAYERS = 10;
-
 bool buttonState[16];
 bool lastReading[16];
 unsigned long lastDebounceTime[16];
 unsigned long lastFire[16];
-
 char macros[MAX_LAYERS][16][MACRO_LEN];
 char homeSsid[SSID_LEN];
 char homePass[PASS_LEN];
@@ -46,12 +40,11 @@ char apPass[PASS_LEN] = "macro1234";
 char layout[5] = "US";
 char targetMacStr[MAC_STR_LEN] = "FF:FF:FF:FF:FF:FF";
 char receiverIp[16] = "";
-uint32_t sleepTimeout = 300;
+uint32_t sleepTimeout = 5;
 uint32_t repeatDelay = 0;
 bool disableSleepWired = false;
 uint8_t totalLayers = 3;
 uint8_t activeLayer = 0;
-
 uint8_t targetMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 bool peerRegistered = false;
 unsigned long lastActivity = 0;
@@ -59,36 +52,29 @@ bool lowPower = false;
 bool staConnected = false;
 bool apActive = false;
 unsigned long lastStaCheck = 0;
-
 typedef struct struct_message {
   char layout[5];
   char macro[100];
 } struct_message;
-
 struct_message outgoing;
-
 static const int LOG_LINES = 40;
 static const int LOG_WIDTH = 96;
 char logBuf[LOG_LINES][LOG_WIDTH];
 int logHead = 0;
 int logCount = 0;
-
 char configBuf[22000];
 char statusBuf[700];
-
 void logLine(const char *msg) {
   snprintf(logBuf[logHead], LOG_WIDTH, "[%lus] %s", millis() / 1000, msg);
   Serial.println(logBuf[logHead]);
   logHead = (logHead + 1) % LOG_LINES;
   if (logCount < LOG_LINES) logCount++;
 }
-
 void clearLogs() {
   logHead = 0;
   logCount = 0;
   for (int i = 0; i < LOG_LINES; i++) logBuf[i][0] = '\0';
 }
-
 void buildLogText(char *out, size_t maxLen) {
   size_t pos = 0;
   int start = (logHead - logCount + LOG_LINES) % LOG_LINES;
@@ -102,14 +88,12 @@ void buildLogText(char *out, size_t maxLen) {
   }
   out[pos] = '\0';
 }
-
 bool parseMac(const char *str, uint8_t *out) {
   int v[6];
   if (sscanf(str, "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) return false;
   for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
   return true;
 }
-
 void loadSettings() {
   prefs.begin("macropad", true);
   char key[8];
@@ -123,7 +107,7 @@ void loadSettings() {
   if (prefs.getString("pass", homePass, PASS_LEN) == 0) homePass[0] = '\0';
   if (prefs.getString("layout", layout, sizeof(layout)) == 0) strcpy(layout, "US");
   if (prefs.getString("mac", targetMacStr, MAC_STR_LEN) == 0) strcpy(targetMacStr, "FF:FF:FF:FF:FF:FF");
-  sleepTimeout = prefs.getUInt("sleep", 300);
+  sleepTimeout = prefs.getUInt("sleep", 5);
   repeatDelay = prefs.getUInt("repeat", 0);
   disableSleepWired = prefs.getBool("nosleepw", false);
   totalLayers = prefs.getUChar("tlayers", 3);
@@ -134,7 +118,6 @@ void loadSettings() {
   if (activeLayer >= totalLayers) activeLayer = 0;
   parseMac(targetMacStr, targetMac);
 }
-
 void saveSettings() {
   prefs.begin("macropad", false);
   char key[8];
@@ -155,7 +138,6 @@ void saveSettings() {
   prefs.putUChar("active", activeLayer);
   prefs.end();
 }
-
 void setActiveLayer(int idx) {
   if (idx < 0) idx = 0;
   if (idx >= (int)totalLayers) idx = totalLayers - 1;
@@ -169,7 +151,6 @@ void setActiveLayer(int idx) {
     logLine(m);
   }
 }
-
 void registerPeer() {
   if (peerRegistered) {
     esp_now_del_peer(targetMac);
@@ -189,11 +170,9 @@ void registerPeer() {
     logLine("ESP-NOW peer registration FAILED");
   }
 }
-
 void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   logLine(status == ESP_NOW_SEND_SUCCESS ? "ESP-NOW delivery OK" : "ESP-NOW delivery FAIL");
 }
-
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len >= 4 && memcmp(data, "<IP>", 4) == 0) {
     int n = len - 4;
@@ -205,14 +184,12 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     logLine(m);
   }
 }
-
 void broadcastMacro(const char *macro) {
   memset(&outgoing, 0, sizeof(outgoing));
   strncpy(outgoing.layout, layout, sizeof(outgoing.layout) - 1);
   strncpy(outgoing.macro, macro, sizeof(outgoing.macro) - 1);
   if (esp_now_send(targetMac, (uint8_t *)&outgoing, sizeof(outgoing)) != ESP_OK) logLine("ESP-NOW send error");
 }
-
 void broadcastWifiCreds() {
   char buf[120];
   int n = snprintf(buf, sizeof(buf), "<WIFI>%s|%s", homeSsid, homePass);
@@ -221,7 +198,6 @@ void broadcastWifiCreds() {
   esp_now_send(targetMac, (uint8_t *)buf, n);
   logLine("Broadcast Wi-Fi credentials to receiver");
 }
-
 char translateChar(char c) {
   if (strcmp(layout, "FR") == 0) {
     switch (c) {
@@ -251,7 +227,6 @@ char translateChar(char c) {
   }
   return c;
 }
-
 uint8_t namedKeyCode(const char *t) {
   if (!strcasecmp(t, "CTRL") || !strcasecmp(t, "CONTROL")) return KEY_LEFT_CTRL;
   if (!strcasecmp(t, "SHIFT")) return KEY_LEFT_SHIFT;
@@ -278,7 +253,6 @@ uint8_t namedKeyCode(const char *t) {
   }
   return 0;
 }
-
 bool consumerAction(const char *t) {
   if (!strcasecmp(t, "VOL_UP")) { Consumer.press(CONSUMER_CONTROL_VOLUME_INCREMENT); delay(20); Consumer.release(); return true; }
   if (!strcasecmp(t, "VOL_DOWN")) { Consumer.press(CONSUMER_CONTROL_VOLUME_DECREMENT); delay(20); Consumer.release(); return true; }
@@ -289,7 +263,6 @@ bool consumerAction(const char *t) {
   if (!strcasecmp(t, "STOP")) { Consumer.press(CONSUMER_CONTROL_STOP); delay(20); Consumer.release(); return true; }
   return false;
 }
-
 bool mouseAction(const char *t) {
   if (!strcasecmp(t, "MOUSE_LEFT")) { Mouse.click(MOUSE_LEFT); return true; }
   if (!strcasecmp(t, "MOUSE_RIGHT")) { Mouse.click(MOUSE_RIGHT); return true; }
@@ -297,7 +270,6 @@ bool mouseAction(const char *t) {
   if (!strcasecmp(t, "MOUSE_DOUBLE")) { Mouse.click(MOUSE_LEFT); delay(40); Mouse.click(MOUSE_LEFT); return true; }
   return false;
 }
-
 void pressCombo(char *token) {
   char *save;
   char *part = strtok_r(token, "+", &save);
@@ -315,12 +287,10 @@ void pressCombo(char *token) {
   delay(15);
   Keyboard.releaseAll();
 }
-
 void sendToken(char *t) {
   while (*t == ' ') t++;
   size_t len = strlen(t);
   if (len == 0) return;
-
   if (!strncasecmp(t, "DELAY:", 6)) {
     long ms = atol(t + 6);
     if (ms > 0) delay(ms);
@@ -334,7 +304,6 @@ void sendToken(char *t) {
   if (mouseAction(t)) return;
   if (consumerAction(t)) return;
   if (strchr(t, '+') != NULL) { pressCombo(t); return; }
-
   uint8_t code = namedKeyCode(t);
   if (code != 0 && len > 1) {
     Keyboard.press(code);
@@ -351,20 +320,16 @@ void sendToken(char *t) {
     delay(5);
   }
 }
-
 void executeMacro(int index) {
   const char *macro = macros[activeLayer][index];
   char m[80];
   snprintf(m, sizeof(m), "L%d Btn %d -> %s", activeLayer + 1, index + 1, macro[0] ? macro : "(empty)");
   logLine(m);
   if (macro[0] == '\0') return;
-
   broadcastMacro(macro);
-
   char work[MACRO_LEN];
   strncpy(work, macro, MACRO_LEN - 1);
   work[MACRO_LEN - 1] = '\0';
-
   char *save;
   char *token = strtok_r(work, ",", &save);
   while (token != NULL) {
@@ -372,7 +337,6 @@ void executeMacro(int index) {
     token = strtok_r(NULL, ",", &save);
   }
 }
-
 void wakeUp() {
   if (lowPower) {
     setCpuFrequencyMhz(240);
@@ -381,7 +345,6 @@ void wakeUp() {
   }
   lastActivity = millis();
 }
-
 size_t jsonEscape(const char *in, char *out, size_t maxLen) {
   size_t pos = 0;
   for (size_t i = 0; in[i] && pos < maxLen - 2; i++) {
@@ -393,7 +356,6 @@ size_t jsonEscape(const char *in, char *out, size_t maxLen) {
   out[pos] = '\0';
   return pos;
 }
-
 void buildConfigJson() {
   char esc[MACRO_LEN * 2];
   size_t pos = 0;
@@ -417,7 +379,6 @@ void buildConfigJson() {
   pos += snprintf(configBuf + pos, sizeof(configBuf) - pos, "\"maxLayers\":%u,", MAX_LAYERS);
   snprintf(configBuf + pos, sizeof(configBuf) - pos, "\"activeLayer\":%u}", activeLayer);
 }
-
 void buildStatusJson() {
   snprintf(statusBuf, sizeof(statusBuf),
     "{\"wired\":%s,\"apActive\":%s,\"staConnected\":%s,\"staIp\":\"%s\",\"apIp\":\"%s\",\"selfMac\":\"%s\",\"receiverIp\":\"%s\",\"activeLayer\":%u,\"totalLayers\":%u}",
@@ -430,7 +391,6 @@ void buildStatusJson() {
     receiverIp[0] ? receiverIp : "",
     activeLayer, totalLayers);
 }
-
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -445,7 +405,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);transition:.2s;}
 header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5;}
 h1{font-size:20px;margin:0;}
-.toggle{cursor:pointer;border:1px solid var(--border);background:var(--tabbg);color:var(--fg);border-radius:20px;padding:8px 14px;font-size:13px;}
+.theme-switch{background:none;border:none;padding:0;margin:0;cursor:pointer;display:inline-flex;align-items:center;-webkit-tap-highlight-color:transparent;}
+.switch-track{position:relative;width:64px;height:32px;border-radius:999px;background:var(--tabbg);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 8px;box-shadow:inset 0 1px 3px rgba(0,0,0,.18);transition:all 0.3s ease-in-out;}
+.switch-icon{position:relative;z-index:2;width:15px;height:15px;display:flex;align-items:center;justify-content:center;transition:all 0.3s ease-in-out;}
+.switch-icon svg{width:15px;height:15px;display:block;}
+.switch-icon.sun{color:#f5a623;opacity:1;transform:scale(1);}
+.switch-icon.moon{color:#8ab4ff;opacity:.45;transform:scale(.85);}
+[data-theme="dark"] .switch-icon.sun{opacity:.45;transform:scale(.85);}
+[data-theme="dark"] .switch-icon.moon{opacity:1;transform:scale(1);}
+.switch-thumb{position:absolute;top:50%;left:3px;width:26px;height:26px;border-radius:50%;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.28);transform:translateY(-50%) translateX(0);transition:all 0.3s ease-in-out;z-index:1;}
+[data-theme="dark"] .switch-thumb{transform:translateY(-50%) translateX(32px);}
+.theme-switch:hover .switch-track{border-color:var(--accent);box-shadow:inset 0 1px 3px rgba(0,0,0,.18),0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);}
+.theme-switch:active .switch-thumb{width:30px;}
+.theme-switch:focus-visible .switch-track{outline:2px solid var(--accent);outline-offset:2px;}
 .wrap{max-width:880px;margin:0 auto;padding:20px;}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;}
 .tab{padding:10px 16px;border-radius:8px;background:var(--tabbg);cursor:pointer;font-size:14px;}
@@ -480,7 +452,13 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <body>
 <header>
 <h1>ESP32-S3 MacroPad</h1>
-<button class="toggle" id="themeBtn">Toggle Theme</button>
+<button class="theme-switch" id="themeBtn" type="button" role="switch" aria-label="Toggle light and dark theme">
+<span class="switch-track">
+<span class="switch-icon sun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg></span>
+<span class="switch-icon moon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></span>
+<span class="switch-thumb"></span>
+</span>
+</button>
 </header>
 <div class="wrap">
 <div class="tabs">
@@ -489,7 +467,6 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <div class="tab" data-t="diag">Diagnostics</div>
 <div class="tab" data-t="pair">Device Pairing</div>
 </div>
-
 <div class="panel active" id="bindings">
 <div class="layerbar">
 <label style="margin:0;">Select Layer to Edit</label>
@@ -498,7 +475,6 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <p class="small">Syntax: CTRL+C | WIN,DELAY:500,C,A,L,C,ENTER | MOUSE_LEFT | VOL_UP | LAYER:2. Use the preset dropdown to auto-fill.</p>
 <div class="grid" id="keyGrid"></div>
 </div>
-
 <div class="panel" id="system">
 <label>Keyboard Layout</label>
 <select id="layout">
@@ -514,8 +490,8 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <button class="act" id="applyLayerBtn">Set Active</button>
 </div>
 </div>
-<label>Sleep Timeout (seconds)</label>
-<input type="number" id="sleep" min="10" max="86400">
+<label>Sleep Timeout (minutes)</label>
+<input type="number" id="sleep" min="1" max="1440">
 <label>Wait Time Between Repeats (ms)</label>
 <input type="number" id="repeat" min="0" max="60000">
 <p class="small">0 disables key repeat. While a button is held, the macro re-fires every N ms.</p>
@@ -529,7 +505,6 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <label>Home Wi-Fi Password</label>
 <input type="password" id="pass" placeholder="(unchanged if blank)">
 <p class="small">Saving Wi-Fi credentials also auto-syncs them to the paired Receiver over ESP-NOW.</p>
-
 <div class="card">
 <h3>Firmware Update (OTA)</h3>
 <p class="small">Select a .bin, then flash this MacroPad or the paired Receiver over Wi-Fi. The Receiver is flashed cross-origin via its learned IP.</p>
@@ -540,14 +515,12 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 </div>
 <div class="small" id="otaStat"></div>
 </div>
-
 <div class="danger">
 <h3>Danger Zone</h3>
 <p class="small">Factory Reset erases ALL stored macros, credentials, and settings from non-volatile memory, then reboots the device.</p>
 <button class="dangerbtn" id="resetBtn">Factory Reset</button>
 </div>
 </div>
-
 <div class="panel" id="diag">
 <div class="status" id="netStatus">Loading status...</div>
 <label>Live Serial Log</label>
@@ -555,18 +528,15 @@ button.ghost{background:var(--tabbg);color:var(--fg);border:1px solid var(--bord
 <button class="ghost" id="clearLogBtn">Clear Logs</button>
 <div class="small">Auto-refresh every 2s.</div>
 </div>
-
 <div class="panel" id="pair">
 <label>Receiver (Dongle) MAC Address</label>
 <input type="text" id="mac" placeholder="AA:BB:CC:DD:EE:FF">
 <p class="small">Enter the Receiver's MAC shown on its own web page. Macros and Wi-Fi sync are sent to this address over ESP-NOW. The Receiver auto-reports its IP back here.</p>
 <div class="status" id="rxStatus" style="margin-top:12px;">Receiver IP: unknown</div>
 </div>
-
 <button class="save" id="saveBtn">Save All Settings</button>
 </div>
 <div id="toast">Saved</div>
-
 <script>
 const PRESETS=["","CTRL+C","CTRL+V","CTRL+X","CTRL+Z","CTRL+A","CTRL+S","ALT+TAB","ALT+F4","WIN+D","WIN+L","WIN,DELAY:500,C,A,L,C,ENTER","ENTER","TAB","ESC","MOUSE_LEFT","MOUSE_RIGHT","MOUSE_MIDDLE","MOUSE_DOUBLE","VOL_UP","VOL_DOWN","MUTE","PLAY_PAUSE","NEXT","PREV","LAYER:1","LAYER:2","LAYER:3","LAYER:4"];
 let MAXL=10;
@@ -594,7 +564,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   t.classList.add('active');document.getElementById(t.dataset.t).classList.add('active');
 });
 const themeBtn=document.getElementById('themeBtn');
-function applyTheme(m){document.documentElement.setAttribute('data-theme',m);localStorage.setItem('mp_theme',m);}
+function applyTheme(m){document.documentElement.setAttribute('data-theme',m);themeBtn.setAttribute('aria-checked',m==='dark'?'true':'false');localStorage.setItem('mp_theme',m);}
 applyTheme(localStorage.getItem('mp_theme')||'light');
 themeBtn.onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
@@ -686,7 +656,6 @@ setInterval(()=>{refreshStatus();loadLogs();},2000);
 </body>
 </html>
 )rawliteral";
-
 class CaptiveHandler : public AsyncWebHandler {
 public:
   bool canHandle(AsyncWebServerRequest *request) { return true; }
@@ -698,7 +667,6 @@ public:
     request->send(res);
   }
 };
-
 void startMdns() {
   MDNS.end();
   if (MDNS.begin("macropadsettings")) {
@@ -708,7 +676,6 @@ void startMdns() {
     logLine("mDNS start failed");
   }
 }
-
 void enableApMode() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apSsid, apPass);
@@ -721,7 +688,6 @@ void enableApMode() {
   snprintf(m, sizeof(m), "AP enabled: %s @ %s", apSsid, WiFi.softAPIP().toString().c_str());
   logLine(m);
 }
-
 void disableApMode() {
   dnsServer.stop();
   WiFi.softAPdisconnect(true);
@@ -730,7 +696,6 @@ void disableApMode() {
   startMdns();
   logLine("STA locked, AP + captive portal disabled");
 }
-
 void handleSave(AsyncWebServerRequest *request) {
   wakeUp();
   char key[8];
@@ -763,7 +728,7 @@ void handleSave(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("sleep", true)) {
     uint32_t s = request->getParam("sleep", true)->value().toInt();
-    if (s >= 10) sleepTimeout = s;
+    if (s >= 1) sleepTimeout = s;
   }
   if (request->hasParam("repeat", true)) {
     repeatDelay = request->getParam("repeat", true)->value().toInt();
@@ -798,7 +763,6 @@ void handleSave(AsyncWebServerRequest *request) {
   saveSettings();
   logLine("Settings saved via REST API");
   request->send(200, "application/json", "{\"status\":\"Saved\"}");
-
   if (ssidChanged) {
     if (!apActive) enableApMode();
     broadcastWifiCreds();
@@ -807,7 +771,6 @@ void handleSave(AsyncWebServerRequest *request) {
     if (homeSsid[0] != '\0') WiFi.begin(homeSsid, homePass);
   }
 }
-
 void handleUpload(AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final) {
   if (index == 0) {
     wakeUp();
@@ -834,7 +797,6 @@ void handleUpload(AsyncWebServerRequest *request, const String &filename, size_t
     }
   }
 }
-
 void startNetwork() {
   enableApMode();
   if (homeSsid[0] != '\0') {
@@ -856,7 +818,6 @@ void startNetwork() {
     logLine("No STA credentials, AP setup mode active");
   }
 }
-
 void initEspNow() {
   uint8_t ch;
   wifi_second_chan_t sc;
@@ -872,11 +833,9 @@ void initEspNow() {
   snprintf(m, sizeof(m), "ESP-NOW ready on channel %u", ch);
   logLine(m);
 }
-
 void setup() {
   Serial.begin(115200);
   delay(300);
-
   for (int i = 0; i < 16; i++) {
     pinMode(BUTTON_PINS[i], INPUT_PULLUP);
     buttonState[i] = HIGH;
@@ -888,19 +847,15 @@ void setup() {
     for (int k = 0; k < 16; k++) macros[l][k][0] = '\0';
   homeSsid[0] = '\0';
   homePass[0] = '\0';
-
   loadSettings();
   logLine("Settings loaded");
-
   Keyboard.begin();
   Mouse.begin();
   Consumer.begin();
   USB.begin();
   logLine("USB HID started");
-
   startNetwork();
   initEspNow();
-
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     wakeUp();
     request->send_P(200, "text/html", INDEX_HTML);
@@ -961,10 +916,8 @@ void setup() {
   server.addHandler(new CaptiveHandler()).setFilter(ON_AP_FILTER);
   server.begin();
   logLine("Async web server live on port 80");
-
   lastActivity = millis();
 }
-
 void scanButtons() {
   unsigned long now = millis();
   for (int i = 0; i < 16; i++) {
@@ -991,7 +944,6 @@ void scanButtons() {
     }
   }
 }
-
 void managePower() {
   if (disableSleepWired && (bool)USB) {
     if (lowPower) {
@@ -1000,17 +952,15 @@ void managePower() {
     }
     return;
   }
-  if (!lowPower && (millis() - lastActivity > (unsigned long)sleepTimeout * 1000UL)) {
+  if (!lowPower && (millis() - lastActivity > (unsigned long)sleepTimeout * 60000UL)) {
     setCpuFrequencyMhz(80);
     lowPower = true;
     logLine("Idle timeout -> CPU 80MHz");
   }
 }
-
 void maintainSta() {
   if (millis() - lastStaCheck < 5000) return;
   lastStaCheck = millis();
-
   if (homeSsid[0] == '\0') {
     staConnected = false;
     if (!apActive) {
@@ -1019,7 +969,6 @@ void maintainSta() {
     }
     return;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     if (!staConnected) {
       staConnected = true;
@@ -1040,7 +989,6 @@ void maintainSta() {
     WiFi.begin(homeSsid, homePass);
   }
 }
-
 void loop() {
   if (apActive) dnsServer.processNextRequest();
   scanButtons();
